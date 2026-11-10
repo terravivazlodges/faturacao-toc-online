@@ -23,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🧾 Portal de Faturação — TOC Online")
-st.write("Automação de extração de reservas do **Smoobu** ordenadas cronologicamente, com obrigatoriedade da linha de Taxa Turística e exportação em Excel ou CSV.")
+st.write("Automação de extração de reservas do **Smoobu** (com deteção de 'Other Fees' da Airbnb e impostos municipais), ordenadas cronologicamente, com download em Excel e CSV.")
 
 uploaded_file = st.file_uploader("Carregue o ficheiro de reservas do Smoobu (.xlsx ou .csv)", type=["xlsx", "csv"])
 
@@ -51,7 +51,15 @@ if uploaded_file is not None:
             
             texto_agrupado = f"{notas} {preco_txt} {detalhes}"
             
-            # Pesquisa por imposto municipal no formato Booking/OTA
+            # 1. Pesquisa por "Other Fees - EUR X" (comum em reservas Airbnb para taxas turísticas)
+            match_other_fees = re.search(r'Other Fees\s*-\s*EUR\s*(\d+[\.,]?\d*)', texto_agrupado, re.IGNORECASE)
+            if match_other_fees:
+                try:
+                    return float(match_other_fees.group(1).replace(',', '.'))
+                except:
+                    pass
+
+            # 2. Pesquisa por imposto municipal no formato Booking/OTA (ex: "imposto municipal - EUR 12")
             match_imposto = re.search(r'(?:imposto municipal|taxa turistica|city tax)\s*-\s*EUR\s*(\d+[\.,]?\d*)', texto_agrupado, re.IGNORECASE)
             if match_imposto:
                 try:
@@ -59,7 +67,7 @@ if uploaded_file is not None:
                 except:
                     pass
             
-            # Pesquisa por menções em euros perto de termos fiscais/municipais
+            # 3. Pesquisa geral por menções em euros perto de termos fiscais/municipais
             match_geral = re.search(r'(\d+[\.,]?\d*)\s*(?:€|EUR)', texto_agrupado, re.IGNORECASE)
             if match_geral and any(termo in texto_agrupado.lower() for termo in ['turistica', 'municipal', 'tx', 'imposto', 'city tax']):
                 try:
@@ -72,7 +80,7 @@ if uploaded_file is not None:
         # Aplicação da extração da taxa turística
         df['Taxa_Turistica'] = df.apply(extrair_taxa_turistica, axis=1)
         
-        # Se não houver taxa turística, o alojamento absorve o preço bruto dividido por 1.04
+        # Cálculo do valor do alojamento sem IVA (4% Açores) deduzindo a taxa turística
         df['Preco_Alojamento_Sem_IVA'] = ((df['Preço_Bruto'] - df['Taxa_Turistica']) / 1.04).round(2)
 
         linhas_toc = []
@@ -106,7 +114,7 @@ if uploaded_file is not None:
                 'Observacoes': f'Reserva Smoobu / {portal}'
             })
             
-            # Linha 2: Taxa Turística / Imposto Municipal (Obrigatória para todas as reservas, valor 0 se não aplicável)
+            # Linha 2: Taxa Turística / Imposto Municipal (Obrigatória por reserva)
             taxa_turistica = row['Taxa_Turistica']
             linhas_toc.append({
                 'Tipo_Documento': 'FR',
@@ -118,12 +126,12 @@ if uploaded_file is not None:
                 'Quantidade': 1.0,
                 'Preco_Unitario': taxa_turistica,
                 'Taxa_IVA': 0.0,
-                'Observacoes': 'Taxa turística / imposto municipal' if taxa_turistica > 0 else 'Isento / Sem taxa turística'
+                'Observacoes': 'Taxa turística / Other Fees' if taxa_turistica > 0 else 'Isento / Sem taxa turística'
             })
 
         df_toc = pd.DataFrame(linhas_toc)
 
-        st.success(f"✅ Ficheiro processado com sucesso! Geradas {len(df_toc)} linhas (com linha de taxa turística obrigatória por reserva).")
+        st.success(f"✅ Ficheiro processado com sucesso! Geradas {len(df_toc)} linhas (com deteção de 'Other Fees' da Airbnb).")
 
         st.subheader("📋 Tabela de Apoio e Validação Prévia")
         st.dataframe(df_toc, use_container_width=True)
