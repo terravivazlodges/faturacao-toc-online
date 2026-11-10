@@ -23,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🧾 Portal de Faturação — TOC Online")
-st.write("Automação de extração de reservas do **Smoobu** (com datas de estadia nas **Observações**), ordenadas cronologicamente.")
+st.write("Automação de extração de reservas do **Smoobu** (com coluna dedicada para a **Estadia**), ordenadas cronologicamente.")
 
 uploaded_file = st.file_uploader("Carregue o ficheiro de reservas do Smoobu (.xlsx ou .csv)", type=["xlsx", "csv"])
 
@@ -101,11 +101,8 @@ if uploaded_file is not None:
             else:
                 codigo_artigo = 'AL-CB'
             
-            # Descrição limpa do alojamento
-            descricao_alojamento = f"Alojamento Local - {alojamento_nome}"
-            
-            # Observações enriquecidas com o período da estadia
-            observacoes_texto = f"Reserva Smoobu / {portal} — Estadia de {data_doc} a {data_partida}"
+            # Texto da coluna dedicada 'Estadia'
+            texto_estadia = f"Estadia de {data_doc} a {data_partida}"
             
             # Linha 1: Alojamento Local (4% IVA)
             linhas_toc.append({
@@ -114,11 +111,12 @@ if uploaded_file is not None:
                 'Cliente_Nome': cliente,
                 'Cliente_NIF': '999999990',
                 'Codigo_Artigo': codigo_artigo,
-                'Descricao': descricao_alojamento,
+                'Descricao': f"Alojamento Local - {alojamento_nome}",
                 'Quantidade': 1.0,
                 'Preco_Unitario': row['Preco_Alojamento_Sem_IVA'],
                 'Taxa_IVA': 4.0,
-                'Observacoes': observacoes_texto
+                'Estadia': texto_estadia,
+                'Observacoes': f'Reserva Smoobu / {portal}'
             })
             
             # Linha 2: Taxa Turística / Imposto Municipal (Obrigatória por reserva)
@@ -133,12 +131,13 @@ if uploaded_file is not None:
                 'Quantidade': 1.0,
                 'Preco_Unitario': taxa_turistica,
                 'Taxa_IVA': 0.0,
-                'Observacoes': f"Taxa turística / Other Fees — Estadia de {data_doc} a {data_partida}" if taxa_turistica > 0 else f"Isento / Sem taxa turística — Estadia de {data_doc} a {data_partida}"
+                'Estadia': texto_estadia,
+                'Observacoes': 'Taxa turística / Other Fees' if taxa_turistica > 0 else 'Isento / Sem taxa turística'
             })
 
         df_toc = pd.DataFrame(linhas_toc)
 
-        st.success(f"✅ Ficheiro processado com sucesso! Geradas {len(df_toc)} linhas com as datas de estadia integradas nas observações.")
+        st.success(f"✅ Ficheiro processado com sucesso! Geradas {len(df_toc)} linhas com coluna de estadia dedicada.")
 
         st.subheader("📋 Tabela de Apoio e Validação Prévia")
         st.dataframe(df_toc, use_container_width=True)
