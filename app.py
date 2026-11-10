@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import io
 
 # Configuração da página
 st.set_page_config(
@@ -22,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🧾 Portal de Faturação — TOC Online")
-st.write("Automação de extração de reservas do **Smoobu** (Excel ou CSV) organizadas **cronologicamente** para emissão de faturas no **TOC Online**.")
+st.write("Automação de extração de reservas do **Smoobu** ordenadas cronologicamente, com obrigatoriedade da linha de Taxa Turística e exportação em Excel ou CSV.")
 
 uploaded_file = st.file_uploader("Carregue o ficheiro de reservas do Smoobu (.xlsx ou .csv)", type=["xlsx", "csv"])
 
@@ -35,11 +36,9 @@ if uploaded_file is not None:
         else:
             df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8-sig')
         
-        # 1. ORDENAÇÃO CRONOLÓGICA por Chegada (Check-in) e Partida (Check-out)
+        # 1. ORDENAÇÃO CRONOLÓGICA por Chegada e Partida
         df['Chegada_DT'] = pd.to_datetime(df['Chegada'], format='%d-%m-%y', errors='coerce')
         df['Partida_DT'] = pd.to_datetime(df['Partida'], format='%d-%m-%y', errors='coerce')
-        
-        # Ordenar primeiramente pela data de chegada e em seguida pela data de partida
         df = df.sort_values(by=['Chegada_DT', 'Partida_DT'], ascending=[True, True]).reset_index(drop=True)
         
         # Limpeza e conversão do Preço Bruto
@@ -52,7 +51,7 @@ if uploaded_file is not None:
             
             texto_agrupado = f"{notas} {preco_txt} {detalhes}"
             
-            # Pesquisa por imposto municipal no formato Booking/OTA (ex: "imposto municipal - EUR 12")
+            # Pesquisa por imposto municipal no formato Booking/OTA
             match_imposto = re.search(r'(?:imposto municipal|taxa turistica|city tax)\s*-\s*EUR\s*(\d+[\.,]?\d*)', texto_agrupado, re.IGNORECASE)
             if match_imposto:
                 try:
@@ -70,10 +69,10 @@ if uploaded_file is not None:
                     
             return 0.0
 
-        # Aplicação da extração da taxa turística / imposto municipal
+        # Aplicação da extração da taxa turística
         df['Taxa_Turistica'] = df.apply(extrair_taxa_turistica, axis=1)
         
-        # Cálculo do valor do alojamento sem IVA (4% Açores)
+        # Se não houver taxa turística, o alojamento absorve o preço bruto dividido por 1.04
         df['Preco_Alojamento_Sem_IVA'] = ((df['Preço_Bruto'] - df['Taxa_Turistica']) / 1.04).round(2)
 
         linhas_toc = []
@@ -107,38 +106,52 @@ if uploaded_file is not None:
                 'Observacoes': f'Reserva Smoobu / {portal}'
             })
             
-            # Linha 2: Taxa Turística / Imposto Municipal (0% IVA com código TTUR, caso exista)
+            # Linha 2: Taxa Turística / Imposto Municipal (Obrigatória para todas as reservas, valor 0 se não aplicável)
             taxa_turistica = row['Taxa_Turistica']
-            if taxa_turistica > 0:
-                linhas_toc.append({
-                    'Tipo_Documento': 'FR',
-                    'Data_Documento': data_doc,
-                    'Cliente_Nome': cliente,
-                    'Cliente_NIF': '999999990',
-                    'Codigo_Artigo': 'TTUR',
-                    'Descricao': 'Taxa Turística',
-                    'Quantidade': 1.0,
-                    'Preco_Unitario': taxa_turistica,
-                    'Taxa_IVA': 0.0,
-                    'Observacoes': 'Taxa turística / imposto municipal recolhido'
-                })
+            linhas_toc.append({
+                'Tipo_Documento': 'FR',
+                'Data_Documento': data_doc,
+                'Cliente_Nome': cliente,
+                'Cliente_NIF': '999999990',
+                'Codigo_Artigo': 'TTUR',
+                'Descricao': 'Taxa Turística',
+                'Quantidade': 1.0,
+                'Preco_Unitario': taxa_turistica,
+                'Taxa_IVA': 0.0,
+                'Observacoes': 'Taxa turística / imposto municipal' if taxa_turistica > 0 else 'Isento / Sem taxa turística'
+            })
 
         df_toc = pd.DataFrame(linhas_toc)
 
-        st.success(f"✅ Ficheiro processado e ordenado cronologicamente com sucesso! Geradas {len(df_toc)} linhas para {len(df)} reservas.")
+        st.success(f"✅ Ficheiro processado com sucesso! Geradas {len(df_toc)} linhas (com linha de taxa turística obrigatória por reserva).")
 
-        st.subheader("📋 Tabela de Apoio e Validação Prévia (Ordenada por Data)")
+        st.subheader("📋 Tabela de Apoio e Validação Prévia")
         st.dataframe(df_toc, use_container_width=True)
 
-        csv_toc = df_toc.to_csv(index=False, sep=';', encoding='utf-8-sig')
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.download_button(
-            label="📥 Descarregar Ficheiro de Importação (TOC Online)",
-            data=csv_toc,
-            file_name="faturacao_toc_online.csv",
-            mime="text/csv"
-        )
+        # Botões de Download em CSV e Excel
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            csv_toc = df_toc.to_csv(index=False, sep=';', encoding='utf-8-sig')
+            st.download_button(
+                label="📥 Descarregar em formato CSV",
+                data=csv_toc,
+                file_name="faturacao_toc_online.csv",
+                mime="text/csv"
+            )
+            
+        with col2:
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_toc.to_excel(writer, index=False, sheet_name='Faturacao')
+            excel_data = output.getvalue()
+            
+            st.download_button(
+                label="📊 Descarregar em formato Excel (.xlsx)",
+                data=excel_data,
+                file_name="faturacao_toc_online.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
     except Exception as e:
         st.error(f"Ocorreu um erro ao processar o ficheiro: {e}")
